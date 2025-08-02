@@ -1,2 +1,2 @@
-# Using Python 3.12 for better compatibility with newer packages
+# Using Python 3.12 for compatibility with tokenizers and other packages
 python-3.12.6
