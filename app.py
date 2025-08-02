@@ -30,7 +30,7 @@ st.set_page_config(
 import pypdf
 import re
 import nltk
-from sentence_transformers import SentenceTransformer
+# Simple embedding approach without sentence-transformers
 import numpy as np
 import chromadb
 import uuid
@@ -218,41 +218,46 @@ class DocumentProcessor:
         }
 
 class ScientificEmbedder:
-    """Scientific text embeddings using sentence transformers"""
+    """Simple text embeddings using basic vectorization"""
     
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2"):
+    def __init__(self, model_name: str = "simple"):
         self.model_name = model_name
-        self.model = None
-        self._load_model()
+        st.info("Using simple text vectorization (no external models required)")
     
     def _load_model(self):
-        """Load the sentence transformer model"""
-        try:
-            with st.spinner("Loading embedding model..."):
-                self.model = SentenceTransformer(self.model_name)
-            st.success("✅ Embedding model loaded successfully")
-        except Exception as e:
-            st.error(f"❌ Error loading embedding model: {e}")
-            try:
-                self.model = SentenceTransformer("all-MiniLM-L12-v2")
-                st.success("✅ Fallback embedding model loaded")
-            except Exception as e2:
-                st.error(f"❌ Fallback model also failed: {e2}")
-                raise e2
+        """No model loading needed for simple approach"""
+        pass
     
     def generate_embeddings(self, texts: List[str]) -> np.ndarray:
-        """Generate embeddings for text(s)"""
-        if self.model is None:
-            raise ValueError("Model not loaded properly")
-        
+        """Generate simple embeddings using TF-IDF approach"""
         try:
             valid_texts = [text for text in texts if text and text.strip()]
             
             if not valid_texts:
                 return np.array([])
             
-            embeddings = self.model.encode(valid_texts, convert_to_numpy=True)
-            return embeddings
+            # Simple vectorization using word frequency
+            embeddings = []
+            for text in valid_texts:
+                # Create a simple 384-dimensional vector based on text characteristics
+                words = text.lower().split()
+                word_freq = {}
+                for word in words:
+                    if word.isalpha() and len(word) > 2:
+                        word_freq[word] = word_freq.get(word, 0) + 1
+                
+                # Create a fixed-size vector (384 dimensions)
+                vector = np.zeros(384)
+                for i, (word, freq) in enumerate(list(word_freq.items())[:384]):
+                    vector[i] = freq
+                
+                # Normalize the vector
+                if np.linalg.norm(vector) > 0:
+                    vector = vector / np.linalg.norm(vector)
+                
+                embeddings.append(vector)
+            
+            return np.array(embeddings)
             
         except Exception as e:
             st.error(f"Error generating embeddings: {e}")
