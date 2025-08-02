@@ -1,298 +1,306 @@
 """
-Scientific answer generator with citation support
+Enhanced Scientific answer generator with OpenAI integration for advanced responses
 """
 
 import re
+import os
 from typing import List, Dict, Any
-import random
+import openai
+from openai import OpenAI
+import json
 
 class ScientificAnswerGenerator:
-    def __init__(self):
-        """Initialize the answer generator"""
+    def __init__(self, api_key: str = None):
+        """Initialize the answer generator with OpenAI"""
+        self.api_key = api_key or os.getenv('OPENAI_API_KEY')
+        
+        if not self.api_key:
+            print("⚠️ No OpenAI API key found. Using fallback template-based generation.")
+            self.use_openai = False
+        else:
+            try:
+                self.client = OpenAI(api_key=self.api_key)
+                self.use_openai = True
+                print("✅ OpenAI client initialized successfully")
+            except Exception as e:
+                print(f"⚠️ OpenAI initialization failed: {e}. Using fallback mode.")
+                self.use_openai = False
+        
+        # Biology domain keywords for context enhancement
         self.biology_keywords = {
-            'cell': ['cellular', 'cells', 'cytoplasm', 'membrane'],
-            'dna': ['genetic', 'genome', 'nucleotide', 'chromosome'],
-            'protein': ['amino acid', 'enzyme', 'peptide', 'polypeptide'],
-            'evolution': ['natural selection', 'adaptation', 'species', 'mutation'],
-            'metabolism': ['energy', 'atp', 'respiration', 'photosynthesis'],
-            'microbiology': ['bacteria', 'microorganism', 'microbe', 'culture']
+            'cellular': ['cell membrane', 'cytoplasm', 'nucleus', 'organelles', 'mitochondria'],
+            'molecular': ['DNA', 'RNA', 'protein', 'enzyme', 'molecule', 'amino acid'],
+            'genetics': ['gene', 'chromosome', 'allele', 'mutation', 'inheritance'],
+            'evolution': ['natural selection', 'adaptation', 'species', 'phylogeny'],
+            'ecology': ['ecosystem', 'biodiversity', 'population', 'community'],
+            'physiology': ['metabolism', 'homeostasis', 'respiration', 'circulation']
         }
         
-        self.answer_templates = {
-            'definition': [
-                "Based on the scientific literature, {term} refers to {definition}.",
-                "According to the research papers, {term} can be defined as {definition}.",
-                "The scientific evidence indicates that {term} is {definition}."
-            ],
-            'process': [
-                "The biological process involves {steps}.",
-                "Research shows that this process occurs through {steps}.",
-                "Scientific studies demonstrate that {steps}."
-            ],
-            'general': [
-                "Based on the available research, {content}.",
-                "According to the scientific literature, {content}.",
-                "The research papers indicate that {content}."
-            ],
-            'comparison': [
-                "The studies show that {comparison}.",
-                "Research demonstrates the following differences: {comparison}.",
-                "Scientific evidence reveals that {comparison}."
-            ]
+        # Scientific terminology patterns
+        self.scientific_patterns = {
+            'equations': r'[A-Za-z]+\s*[=+\-*/]\s*[A-Za-z0-9\s+\-*/()]+',
+            'citations': r'\[[0-9,\s\-]+\]|\([^)]*[0-9]{4}[^)]*\)',
+            'measurements': r'\d+\.?\d*\s*(mg|kg|ml|l|cm|mm|μm|nm|°C|pH)',
+            'chemical_formulas': r'[A-Z][a-z]?[0-9]*(?:[A-Z][a-z]?[0-9]*)*',
+            'species_names': r'[A-Z][a-z]+\s+[a-z]+'
         }
-    
+
     def generate_answer(self, query: str, context: str, sources: List[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Generate a scientific answer with citations"""
+        """Generate enhanced scientific answer using OpenAI or fallback"""
         try:
             if not context or not context.strip():
-                return {
-                    'answer': f"I couldn't find relevant information about '{query}' in the uploaded documents. Please upload more relevant biology research papers or try rephrasing your question.",
-                    'confidence': 0.0,
-                    'sources_used': [],
-                    'citations': [],
-                    'equations_found': [],
-                    'generation_method': 'no_context'
-                }
+                return self._generate_no_context_response(query)
             
-            # Analyze query type
-            query_type = self._analyze_query_type(query)
+            # Extract scientific elements from context
+            scientific_elements = self._extract_scientific_elements(context)
             
-            # Extract key information from context
-            key_info = self._extract_key_information(context, query)
+            if self.use_openai:
+                return self._generate_openai_answer(query, context, scientific_elements, sources)
+            else:
+                return self._generate_fallback_answer(query, context, scientific_elements, sources)
+                
+        except Exception as e:
+            print(f"Error generating answer: {e}")
+            return self._generate_error_response(query, str(e))
+
+    def _generate_openai_answer(self, query: str, context: str, scientific_elements: Dict, sources: List[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Generate answer using OpenAI GPT"""
+        try:
+            # Create enhanced prompt for scientific accuracy
+            system_prompt = self._create_system_prompt()
+            user_prompt = self._create_user_prompt(query, context, scientific_elements)
             
-            # Generate answer based on query type and context
-            answer = self._generate_contextual_answer(query, context, query_type, key_info)
+            # Call OpenAI API
+            response = self.client.chat.completions.create(
+                model="gpt-3.5-turbo",  # or "gpt-4" for better results
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.1,  # Low temperature for scientific accuracy
+                max_tokens=800,
+                top_p=0.9
+            )
             
-            # Extract citations and equations
-            citations = self._extract_citations(context)
-            equations = self._extract_equations(context)
+            answer_text = response.choices[0].message.content.strip()
             
-            # Calculate confidence based on context quality
-            confidence = self._calculate_confidence(query, context, sources or [])
-            
-            # Format sources
-            sources_used = self._format_sources(sources or [])
+            # Calculate confidence based on response quality
+            confidence = self._calculate_openai_confidence(answer_text, context, query)
             
             return {
-                'answer': answer,
+                'answer': answer_text,
                 'confidence': confidence,
-                'sources_used': sources_used,
-                'citations': citations,
-                'equations_found': equations,
-                'generation_method': 'template_based'
+                'sources_used': self._format_sources(sources or []),
+                'citations': scientific_elements.get('citations', []),
+                'equations_found': scientific_elements.get('equations', []),
+                'scientific_terms': scientific_elements.get('scientific_terms', []),
+                'generation_method': 'openai_gpt',
+                'model_used': 'gpt-3.5-turbo'
             }
             
         except Exception as e:
-            print(f"Error generating answer: {e}")
-            return {
-                'answer': f"I encountered an error while processing your question about '{query}'. Please try again or rephrase your question.",
-                'confidence': 0.0,
-                'sources_used': [],
-                'citations': [],
-                'equations_found': [],
-                'generation_method': 'error'
-            }
-    
-    def _analyze_query_type(self, query: str) -> str:
-        """Analyze the type of query"""
-        query_lower = query.lower()
+            print(f"OpenAI generation failed: {e}")
+            return self._generate_fallback_answer(query, context, scientific_elements, sources)
+
+    def _create_system_prompt(self) -> str:
+        """Create system prompt for OpenAI"""
+        return """You are an expert scientific assistant specializing in biology research. Your role is to:
+
+1. Provide accurate, evidence-based answers from scientific literature
+2. Use proper scientific terminology and maintain technical accuracy
+3. Explain complex biological concepts clearly and systematically
+4. Reference mathematical equations, chemical formulas, and measurements when relevant
+5. Maintain scientific rigor while being accessible
+6. Always base your answers on the provided research context
+
+Guidelines:
+- Be precise with scientific facts and terminology
+- Explain biological processes step-by-step when asked
+- Include relevant equations or formulas if present in the context
+- Use proper scientific nomenclature (species names, chemical compounds)
+- Acknowledge limitations if the context doesn't fully answer the question
+- Structure answers logically: definition → mechanism → significance/applications"""
+
+    def _create_user_prompt(self, query: str, context: str, scientific_elements: Dict) -> str:
+        """Create user prompt with context and scientific elements"""
+        prompt = f"""Question: {query}
+
+Research Context:
+{context[:3000]}  # Limit context to avoid token limits
+
+Scientific Elements Found:
+"""
         
-        # Definition questions
-        if any(word in query_lower for word in ['what is', 'define', 'definition', 'meaning of']):
-            return 'definition'
+        if scientific_elements.get('equations'):
+            prompt += f"Equations: {', '.join(scientific_elements['equations'][:3])}\n"
         
-        # Process questions
-        elif any(word in query_lower for word in ['how does', 'how do', 'process', 'mechanism', 'procedure']):
-            return 'process'
+        if scientific_elements.get('citations'):
+            prompt += f"Citations: {', '.join(scientific_elements['citations'][:3])}\n"
         
-        # Comparison questions
-        elif any(word in query_lower for word in ['compare', 'difference', 'versus', 'vs', 'between']):
-            return 'comparison'
+        if scientific_elements.get('measurements'):
+            prompt += f"Measurements: {', '.join(scientific_elements['measurements'][:5])}\n"
         
-        # Quantitative questions
-        elif any(word in query_lower for word in ['how many', 'how much', 'number of', 'amount']):
-            return 'quantitative'
+        if scientific_elements.get('species_names'):
+            prompt += f"Species: {', '.join(scientific_elements['species_names'][:3])}\n"
+
+        prompt += """
+Please provide a comprehensive, scientifically accurate answer based on this research context. 
+Structure your response to directly address the question while incorporating relevant scientific details from the context.
+If equations or specific measurements are mentioned, include them in your explanation.
+"""
         
-        else:
-            return 'general'
-    
-    def _extract_key_information(self, context: str, query: str) -> Dict[str, Any]:
-        """Extract key information from context relevant to the query"""
+        return prompt
+
+    def _extract_scientific_elements(self, context: str) -> Dict[str, List[str]]:
+        """Extract scientific elements from context"""
+        elements = {
+            'equations': [],
+            'citations': [],
+            'measurements': [],
+            'chemical_formulas': [],
+            'species_names': [],
+            'scientific_terms': []
+        }
+        
+        # Extract equations
+        equations = re.findall(self.scientific_patterns['equations'], context)
+        elements['equations'] = [eq.strip() for eq in equations if len(eq.strip()) > 3][:5]
+        
+        # Extract citations
+        citations = re.findall(self.scientific_patterns['citations'], context)
+        elements['citations'] = list(set([cit.strip() for cit in citations]))[:5]
+        
+        # Extract measurements
+        measurements = re.findall(self.scientific_patterns['measurements'], context)
+        elements['measurements'] = list(set(measurements))[:10]
+        
+        # Extract chemical formulas
+        chemical_formulas = re.findall(self.scientific_patterns['chemical_formulas'], context)
+        # Filter to likely chemical formulas (contain numbers)
+        elements['chemical_formulas'] = [f for f in chemical_formulas if re.search(r'\d', f)][:5]
+        
+        # Extract species names (capitalized genus + lowercase species)
+        species_names = re.findall(self.scientific_patterns['species_names'], context)
+        elements['species_names'] = list(set(species_names))[:5]
+        
+        # Extract scientific terms
+        context_lower = context.lower()
+        scientific_terms = []
+        for category, terms in self.biology_keywords.items():
+            for term in terms:
+                if term.lower() in context_lower:
+                    scientific_terms.append(term)
+        elements['scientific_terms'] = list(set(scientific_terms))[:10]
+        
+        return elements
+
+    def _calculate_openai_confidence(self, answer: str, context: str, query: str) -> float:
+        """Calculate confidence for OpenAI-generated answer"""
+        confidence = 0.4  # Base confidence for OpenAI responses
+        
+        # Check if answer contains specific scientific terms
+        answer_lower = answer.lower()
+        context_lower = context.lower()
+        
+        # Term overlap bonus
         query_words = set(query.lower().split())
+        answer_words = set(answer_lower.split())
+        overlap = len(query_words.intersection(answer_words))
+        confidence += min(0.2, overlap / max(1, len(query_words)))
         
-        # Find sentences that contain query keywords
+        # Scientific terminology bonus
+        scientific_term_count = 0
+        for terms in self.biology_keywords.values():
+            for term in terms:
+                if term.lower() in answer_lower:
+                    scientific_term_count += 1
+        
+        confidence += min(0.2, scientific_term_count * 0.02)
+        
+        # Length and structure bonus
+        if len(answer) > 100:
+            confidence += 0.1
+        
+        # Context utilization bonus
+        context_words = set(context_lower.split())
+        answer_context_overlap = len(answer_words.intersection(context_words))
+        if answer_context_overlap > 10:
+            confidence += 0.1
+        
+        return min(0.95, confidence)  # Cap at 95% for AI-generated content
+
+    def _generate_fallback_answer(self, query: str, context: str, scientific_elements: Dict, sources: List[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Generate answer using template-based approach (fallback)"""
+        # Extract relevant sentences from context
         sentences = re.split(r'[.!?]+', context)
         relevant_sentences = []
         
+        query_words = set(query.lower().split())
+        
         for sentence in sentences:
             sentence = sentence.strip()
-            if len(sentence) > 20:  # Skip very short sentences
+            if len(sentence) > 30:
                 sentence_words = set(sentence.lower().split())
-                
-                # Check overlap with query
                 overlap = len(query_words.intersection(sentence_words))
                 if overlap > 0:
                     relevant_sentences.append({
                         'text': sentence,
-                        'overlap_score': overlap / len(query_words),
-                        'has_numbers': bool(re.search(r'\d+', sentence)),
-                        'has_technical_terms': self._has_technical_terms(sentence)
+                        'relevance': overlap / len(query_words)
                     })
         
         # Sort by relevance
-        relevant_sentences.sort(key=lambda x: x['overlap_score'], reverse=True)
+        relevant_sentences.sort(key=lambda x: x['relevance'], reverse=True)
         
-        return {
-            'relevant_sentences': relevant_sentences[:5],  # Top 5 most relevant
-            'has_quantitative_info': any(s['has_numbers'] for s in relevant_sentences),
-            'technical_density': sum(s['has_technical_terms'] for s in relevant_sentences) / max(1, len(relevant_sentences))
-        }
-    
-    def _has_technical_terms(self, text: str) -> bool:
-        """Check if text contains technical biology terms"""
-        text_lower = text.lower()
-        for category, terms in self.biology_keywords.items():
-            if any(term in text_lower for term in terms):
-                return True
-        return False
-    
-    def _generate_contextual_answer(self, query: str, context: str, query_type: str, key_info: Dict[str, Any]) -> str:
-        """Generate answer based on context and query type"""
-        relevant_sentences = key_info.get('relevant_sentences', [])
+        # Build answer
+        answer_parts = ["Based on the scientific literature:"]
         
-        if not relevant_sentences:
-            # Fallback: use first part of context
-            first_part = context[:800] + "..." if len(context) > 800 else context
-            return f"Based on the available documents: {first_part}"
+        for sent_info in relevant_sentences[:3]:
+            sentence = sent_info['text']
+            if len(sentence) > 20:
+                answer_parts.append(sentence)
         
-        # Build answer from most relevant sentences
-        answer_parts = []
+        # Add scientific elements if found
+        if scientific_elements.get('equations'):
+            answer_parts.append(f"Key equations include: {', '.join(scientific_elements['equations'][:2])}")
         
-        if query_type == 'definition':
-            answer_parts.append("Based on the scientific literature:")
-            
-            for sentence_info in relevant_sentences[:3]:
-                sentence = sentence_info['text']
-                if len(sentence) > 30:  # Ensure substantial content
-                    answer_parts.append(sentence.strip())
+        if scientific_elements.get('measurements'):
+            answer_parts.append(f"Relevant measurements: {', '.join(scientific_elements['measurements'][:3])}")
         
-        elif query_type == 'process':
-            answer_parts.append("According to the research papers, the process involves:")
-            
-            for i, sentence_info in enumerate(relevant_sentences[:4]):
-                sentence = sentence_info['text']
-                if len(sentence) > 30:
-                    answer_parts.append(f"{i+1}. {sentence.strip()}")
-        
-        elif query_type == 'quantitative':
-            answer_parts.append("The research provides the following quantitative information:")
-            
-            # Prioritize sentences with numbers
-            quantitative_sentences = [s for s in relevant_sentences if s['has_numbers']]
-            
-            for sentence_info in (quantitative_sentences or relevant_sentences)[:3]:
-                sentence = sentence_info['text']
-                if len(sentence) > 30:
-                    answer_parts.append(sentence.strip())
-        
-        elif query_type == 'comparison':
-            answer_parts.append("The scientific literature shows the following comparisons:")
-            
-            for sentence_info in relevant_sentences[:3]:
-                sentence = sentence_info['text']
-                if len(sentence) > 30:
-                    answer_parts.append(sentence.strip())
-        
-        else:  # general
-            answer_parts.append("Based on the available research:")
-            
-            for sentence_info in relevant_sentences[:3]:
-                sentence = sentence_info['text']
-                if len(sentence) > 30:
-                    answer_parts.append(sentence.strip())
-        
-        # Join answer parts
-        if len(answer_parts) > 1:
-            answer = answer_parts[0] + " " + " ".join(answer_parts[1:])
-        else:
-            answer = " ".join(answer_parts) if answer_parts else context[:800]
-        
-        # Ensure proper ending
+        answer = " ".join(answer_parts)
         if not answer.endswith('.'):
             answer += "."
         
-        return answer
-    
-    def _extract_citations(self, context: str) -> List[str]:
-        """Extract citations from context"""
-        citation_patterns = [
-            r'\[[0-9,\s\-]+\]',  # [1], [1,2], [1-3]
-            r'\([^)]*[0-9]{4}[^)]*\)',  # (Author, 2023)
-            r'[A-Z][a-z]+\s+et\s+al\.\s*\([0-9]{4}\)',  # Smith et al. (2023)
-        ]
+        confidence = self._calculate_template_confidence(query, context, relevant_sentences)
         
-        citations = []
-        for pattern in citation_patterns:
-            matches = re.findall(pattern, context)
-            citations.extend(matches)
+        return {
+            'answer': answer,
+            'confidence': confidence,
+            'sources_used': self._format_sources(sources or []),
+            'citations': scientific_elements.get('citations', []),
+            'equations_found': scientific_elements.get('equations', []),
+            'scientific_terms': scientific_elements.get('scientific_terms', []),
+            'generation_method': 'template_based'
+        }
+
+    def _calculate_template_confidence(self, query: str, context: str, relevant_sentences: List) -> float:
+        """Calculate confidence for template-based answers"""
+        if not relevant_sentences:
+            return 0.1
         
-        # Remove duplicates and return first 10
-        return list(set(citations))[:10]
-    
-    def _extract_equations(self, context: str) -> List[str]:
-        """Extract mathematical equations from context"""
-        equation_patterns = [
-            r'[A-Za-z]+\s*[=+\-*/]\s*[A-Za-z0-9\s+\-*/()]+',
-            r'\b[A-Z][a-z]*\s*=\s*[0-9.]+',
-            r'[∑∫∂∆αβγδεζηθικλμνξοπρστυφχψω]',
-        ]
+        # Base confidence from relevance scores
+        avg_relevance = sum(s['relevance'] for s in relevant_sentences) / len(relevant_sentences)
+        confidence = min(0.7, avg_relevance)
         
-        equations = []
-        for pattern in equation_patterns:
-            matches = re.findall(pattern, context)
-            equations.extend(matches)
-        
-        # Filter and clean equations
-        clean_equations = []
-        for eq in equations:
-            eq = eq.strip()
-            if len(eq) > 3 and len(eq) < 100:  # Reasonable length
-                clean_equations.append(eq)
-        
-        return list(set(clean_equations))[:5]  # Return first 5 unique equations
-    
-    def _calculate_confidence(self, query: str, context: str, sources: List[Dict[str, Any]]) -> float:
-        """Calculate confidence score for the answer"""
-        confidence = 0.3  # Base confidence
-        
-        # Query-context relevance
-        query_words = set(query.lower().split())
-        context_words = set(context.lower().split())
-        
-        # Word overlap
-        overlap = len(query_words.intersection(context_words))
-        overlap_score = min(0.3, overlap / max(1, len(query_words)))
-        confidence += overlap_score
-        
-        # Source quality
-        if sources:
-            avg_similarity = sum(s.get('similarity', 0) for s in sources) / len(sources)
-            confidence += min(0.3, avg_similarity)
-            
-            # Bonus for multiple sources
-            if len(sources) >= 3:
-                confidence += 0.1
-        
-        # Context length (more context usually means better answer)
+        # Context quality bonus
         if len(context) > 500:
             confidence += 0.1
         
-        # Technical content bonus
-        if any(term in context.lower() for terms in self.biology_keywords.values() for term in terms):
+        # Multiple sources bonus
+        if len(relevant_sentences) >= 3:
             confidence += 0.1
         
-        return min(1.0, confidence)
-    
+        return min(0.8, confidence)  # Cap template-based confidence at 80%
+
     def _format_sources(self, sources: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Format sources for display"""
         formatted_sources = []
@@ -312,3 +320,27 @@ class ScientificAnswerGenerator:
             formatted_sources.append(formatted_source)
         
         return formatted_sources
+
+    def _generate_no_context_response(self, query: str) -> Dict[str, Any]:
+        """Generate response when no context is available"""
+        return {
+            'answer': f"I couldn't find relevant information about '{query}' in the uploaded documents. Please upload biology research papers that contain information about this topic, or try rephrasing your question with more specific scientific terms.",
+            'confidence': 0.0,
+            'sources_used': [],
+            'citations': [],
+            'equations_found': [],
+            'scientific_terms': [],
+            'generation_method': 'no_context'
+        }
+
+    def _generate_error_response(self, query: str, error_msg: str) -> Dict[str, Any]:
+        """Generate response when an error occurs"""
+        return {
+            'answer': f"I encountered an error while processing your question about '{query}'. Please try rephrasing your question or upload more relevant documents. Error details: {error_msg}",
+            'confidence': 0.0,
+            'sources_used': [],
+            'citations': [],
+            'equations_found': [],
+            'scientific_terms': [],
+            'generation_method': 'error'
+        }

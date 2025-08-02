@@ -1,7 +1,7 @@
 """
 Scientific Literature RAG System - Complete Streamlit Application
 A complete RAG system for scientific literature with document processing, 
-vector search, and intelligent answer generation.
+vector search, and intelligent answer generation with OpenAI integration.
 """
 
 import streamlit as st
@@ -13,6 +13,10 @@ import traceback
 from typing import List, Dict, Any
 import tempfile
 import shutil
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Page configuration
 st.set_page_config(
@@ -36,6 +40,14 @@ import psutil
 import logging
 from datetime import datetime
 
+# Import OpenAI
+try:
+    from openai import OpenAI
+    OPENAI_AVAILABLE = True
+except ImportError:
+    OPENAI_AVAILABLE = False
+    st.warning("OpenAI not available. Install with: pip install openai")
+
 # Download NLTK data
 try:
     nltk.data.find('tokenizers/punkt')
@@ -53,6 +65,7 @@ if 'initialized' not in st.session_state:
     st.session_state.collection = None
     st.session_state.processing_status = ""
     st.session_state.query_count = 0
+    st.session_state.generator = None
 
 class DocumentProcessor:
     """Document processor for scientific literature"""
@@ -245,6 +258,267 @@ class ScientificEmbedder:
             st.error(f"Error generating embeddings: {e}")
             return np.zeros((len(texts), 384))
 
+class EnhancedScientificAnswerGenerator:
+    """Enhanced Scientific answer generator with OpenAI integration"""
+    
+    def __init__(self, api_key: str = None):
+        """Initialize the answer generator with OpenAI"""
+        self.api_key = api_key or os.getenv('OPENAI_API_KEY')
+        
+        if not self.api_key or not OPENAI_AVAILABLE:
+            self.use_openai = False
+            if not OPENAI_AVAILABLE:
+                st.info("💡 OpenAI not available. Using template-based generation.")
+            else:
+                st.info("💡 No OpenAI API key found. Using template-based generation.")
+        else:
+            try:
+                self.client = OpenAI(api_key=self.api_key)
+                self.use_openai = True
+                st.success("✅ OpenAI client initialized successfully")
+            except Exception as e:
+                st.warning(f"⚠️ OpenAI initialization failed: {e}. Using fallback mode.")
+                self.use_openai = False
+        
+        # Biology domain keywords for context enhancement
+        self.biology_keywords = {
+            'cellular': ['cell membrane', 'cytoplasm', 'nucleus', 'organelles', 'mitochondria'],
+            'molecular': ['DNA', 'RNA', 'protein', 'enzyme', 'molecule', 'amino acid'],
+            'genetics': ['gene', 'chromosome', 'allele', 'mutation', 'inheritance'],
+            'evolution': ['natural selection', 'adaptation', 'species', 'phylogeny'],
+            'ecology': ['ecosystem', 'biodiversity', 'population', 'community'],
+            'physiology': ['metabolism', 'homeostasis', 'respiration', 'circulation']
+        }
+
+    def generate_answer(self, query: str, context: str, sources: List[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Generate enhanced scientific answer using OpenAI or fallback"""
+        try:
+            if not context or not context.strip():
+                return {
+                    'answer': f"I couldn't find relevant information about '{query}' in the uploaded documents. Please upload more relevant biology research papers or try rephrasing your question.",
+                    'confidence': 0.0,
+                    'sources_used': self._format_sources(sources or []),
+                    'generation_method': 'no_context'
+                }
+            
+            # Extract scientific elements from context
+            scientific_elements = self._extract_scientific_elements(context)
+            
+            if self.use_openai:
+                return self._generate_openai_answer(query, context, scientific_elements, sources)
+            else:
+                return self._generate_fallback_answer(query, context, scientific_elements, sources)
+                
+        except Exception as e:
+            st.error(f"Error generating answer: {e}")
+            return {
+                'answer': f"I encountered an error while processing your question about '{query}'. Please try again or rephrase your question.",
+                'confidence': 0.0,
+                'sources_used': self._format_sources(sources or []),
+                'generation_method': 'error'
+            }
+
+    def _generate_openai_answer(self, query: str, context: str, scientific_elements: Dict, sources: List[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Generate answer using OpenAI GPT"""
+        try:
+            # Create enhanced prompt for scientific accuracy
+            system_prompt = """You are an expert scientific assistant specializing in biology research. Your role is to:
+
+1. Provide accurate, evidence-based answers from scientific literature
+2. Use proper scientific terminology and maintain technical accuracy
+3. Explain complex biological concepts clearly and systematically
+4. Reference mathematical equations, chemical formulas, and measurements when relevant
+5. Maintain scientific rigor while being accessible
+6. Always base your answers on the provided research context
+
+Guidelines:
+- Be precise with scientific facts and terminology
+- Explain biological processes step-by-step when asked
+- Include relevant equations or formulas if present in the context
+- Use proper scientific nomenclature (species names, chemical compounds)
+- Acknowledge limitations if the context doesn't fully answer the question
+- Structure answers logically: definition → mechanism → significance/applications"""
+
+            user_prompt = f"""Question: {query}
+
+Research Context:
+{context[:3000]}
+
+Scientific Elements Found:
+"""
+            
+            if scientific_elements.get('equations'):
+                user_prompt += f"Equations: {', '.join(scientific_elements['equations'][:3])}\n"
+            
+            if scientific_elements.get('citations'):
+                user_prompt += f"Citations: {', '.join(scientific_elements['citations'][:3])}\n"
+
+            user_prompt += """
+Please provide a comprehensive, scientifically accurate answer based on this research context. 
+Structure your response to directly address the question while incorporating relevant scientific details from the context.
+If equations or specific measurements are mentioned, include them in your explanation.
+"""
+            
+            # Call OpenAI API
+            response = self.client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.1,
+                max_tokens=800,
+                top_p=0.9
+            )
+            
+            answer_text = response.choices[0].message.content.strip()
+            
+            # Calculate confidence based on response quality
+            confidence = self._calculate_openai_confidence(answer_text, context, query)
+            
+            return {
+                'answer': answer_text,
+                'confidence': confidence,
+                'sources_used': self._format_sources(sources or []),
+                'generation_method': 'openai_gpt',
+                'model_used': 'gpt-3.5-turbo'
+            }
+            
+        except Exception as e:
+            st.error(f"OpenAI generation failed: {e}")
+            return self._generate_fallback_answer(query, context, scientific_elements, sources)
+
+    def _generate_fallback_answer(self, query: str, context: str, scientific_elements: Dict, sources: List[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Generate answer using template-based approach (fallback)"""
+        # Extract relevant sentences from context
+        sentences = re.split(r'[.!?]+', context)
+        relevant_sentences = []
+        
+        query_words = set(query.lower().split())
+        
+        for sentence in sentences:
+            sentence = sentence.strip()
+            if len(sentence) > 30:
+                sentence_words = set(sentence.lower().split())
+                overlap = len(query_words.intersection(sentence_words))
+                if overlap > 0:
+                    relevant_sentences.append({
+                        'text': sentence,
+                        'relevance': overlap / len(query_words)
+                    })
+        
+        # Sort by relevance
+        relevant_sentences.sort(key=lambda x: x['relevance'], reverse=True)
+        
+        # Build answer
+        answer_parts = ["Based on the scientific literature:"]
+        
+        for sent_info in relevant_sentences[:3]:
+            sentence = sent_info['text']
+            if len(sentence) > 20:
+                answer_parts.append(sentence)
+        
+        # Add scientific elements if found
+        if scientific_elements.get('equations'):
+            answer_parts.append(f"Key equations include: {', '.join(scientific_elements['equations'][:2])}")
+        
+        answer = " ".join(answer_parts)
+        if not answer.endswith('.'):
+            answer += "."
+        
+        confidence = min(0.8, 0.3 + len(relevant_sentences) * 0.1)
+        
+        return {
+            'answer': answer,
+            'confidence': confidence,
+            'sources_used': self._format_sources(sources or []),
+            'generation_method': 'template_based'
+        }
+
+    def _extract_scientific_elements(self, context: str) -> Dict[str, List[str]]:
+        """Extract scientific elements from context"""
+        elements = {
+            'equations': [],
+            'citations': []
+        }
+        
+        # Extract equations
+        equation_patterns = [
+            r'[A-Za-z]+\s*[=+\-*/]\s*[A-Za-z0-9\s+\-*/()]+',
+            r'\b[A-Z][a-z]*\s*=\s*[0-9.]+',
+            r'[∑∫∂∆αβγδεζηθικλμνξοπρστυφχψω]'
+        ]
+        
+        equations = []
+        for pattern in equation_patterns:
+            matches = re.findall(pattern, context)
+            equations.extend(matches)
+        
+        elements['equations'] = [eq.strip() for eq in equations if len(eq.strip()) > 3][:5]
+        
+        # Extract citations
+        citation_patterns = [
+            r'\[[0-9,\s\-]+\]',
+            r'\([^)]*[0-9]{4}[^)]*\)',
+            r'[A-Z][a-z]+\s+et\s+al\.\s*\([0-9]{4}\)'
+        ]
+        
+        citations = []
+        for pattern in citation_patterns:
+            matches = re.findall(pattern, context)
+            citations.extend(matches)
+        
+        elements['citations'] = list(set([cit.strip() for cit in citations]))[:5]
+        
+        return elements
+
+    def _calculate_openai_confidence(self, answer: str, context: str, query: str) -> float:
+        """Calculate confidence for OpenAI-generated answer"""
+        confidence = 0.4  # Base confidence for OpenAI responses
+        
+        # Check if answer contains specific scientific terms
+        answer_lower = answer.lower()
+        
+        # Term overlap bonus
+        query_words = set(query.lower().split())
+        answer_words = set(answer_lower.split())
+        overlap = len(query_words.intersection(answer_words))
+        confidence += min(0.2, overlap / max(1, len(query_words)))
+        
+        # Scientific terminology bonus
+        scientific_term_count = 0
+        for terms in self.biology_keywords.values():
+            for term in terms:
+                if term.lower() in answer_lower:
+                    scientific_term_count += 1
+        
+        confidence += min(0.2, scientific_term_count * 0.02)
+        
+        # Length bonus
+        if len(answer) > 100:
+            confidence += 0.1
+        
+        return min(0.95, confidence)
+
+    def _format_sources(self, sources: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Format sources for display"""
+        formatted_sources = []
+        
+        for i, source in enumerate(sources):
+            metadata = source.get('metadata', {})
+            
+            formatted_source = {
+                'source_number': i + 1,
+                'filename': metadata.get('source_file', 'Unknown'),
+                'similarity_score': source.get('similarity', 0.0),
+                'has_equations': metadata.get('has_equations') == 'True',
+                'has_citations': metadata.get('has_citations') == 'True',
+                'word_count': metadata.get('word_count', 'Unknown')
+            }
+            formatted_sources.append(formatted_source)
+        
+        return formatted_sources
+
 def initialize_system():
     """Initialize all system components"""
     try:
@@ -268,6 +542,10 @@ def initialize_system():
                     name="scientific_papers",
                     metadata={"description": "Scientific literature for biology RAG system"}
                 )
+            
+            # Initialize enhanced answer generator
+            api_key = os.getenv('OPENAI_API_KEY')
+            st.session_state.generator = EnhancedScientificAnswerGenerator(api_key=api_key)
             
             st.session_state.initialized = True
             st.success("✅ System initialized successfully!")
@@ -383,90 +661,35 @@ def search_documents(query, n_results=5):
         st.error(f"Error searching documents: {str(e)}")
         return []
 
-def generate_answer(query, search_results):
-    """Generate answer from search results"""
-    try:
-        if not search_results:
-            return {
-                'answer': f"I couldn't find relevant information about '{query}' in the uploaded documents.",
-                'confidence': 0.0,
-                'sources_used': []
-            }
-        
-        # Create context from top results
-        context_parts = []
-        sources_used = []
-        
-        for i, result in enumerate(search_results[:3]):
-            content = result['content']
-            if content and len(content.strip()) > 10:
-                content = content[:800] + "..." if len(content) > 800 else content
-                context_parts.append(f"Source {i+1}: {content}")
-                
-                metadata = result['metadata']
-                sources_used.append({
-                    'source_number': i + 1,
-                    'filename': metadata.get('source_file', 'Unknown'),
-                    'similarity_score': result['similarity'],
-                    'has_equations': metadata.get('has_equations') == 'True',
-                    'has_citations': metadata.get('has_citations') == 'True'
-                })
-        
-        if not context_parts:
-            return {
-                'answer': f"Found documents but couldn't extract relevant content for '{query}'.",
-                'confidence': 0.1,
-                'sources_used': []
-            }
-        
-        # Simple answer generation
-        context_text = "\n\n".join(context_parts)
-        answer = generate_simple_answer(query, context_text)
-        
-        return {
-            'answer': answer,
-            'confidence': min(0.9, 0.5 + len(sources_used) * 0.1),
-            'sources_used': sources_used
-        }
-        
-    except Exception as e:
-        st.error(f"Error generating answer: {str(e)}")
-        return {
-            'answer': f"Error generating answer for '{query}'. Please try again.",
-            'confidence': 0.0,
-            'sources_used': []
-        }
-
-def generate_simple_answer(query, context):
-    """Generate a simple answer from context"""
-    try:
-        query_lower = query.lower()
-        
-        # Find relevant sentences
-        sentences = context.split('.')
-        relevant_sentences = []
-        
-        query_words = set(query_lower.split())
-        
-        for sentence in sentences:
-            sentence = sentence.strip()
-            if len(sentence) > 20:
-                sentence_words = set(sentence.lower().split())
-                overlap = len(query_words.intersection(sentence_words))
-                if overlap > 0:
-                    relevant_sentences.append(sentence)
-        
-        if relevant_sentences:
-            answer = ". ".join(relevant_sentences[:3])
-            if not answer.endswith('.'):
-                answer += "."
-            return f"Based on the available documents: {answer}"
-        else:
-            first_part = context[:500] + "..." if len(context) > 500 else context
-            return f"Based on the available documents: {first_part}"
+def search_and_answer(query, num_sources):
+    """Search documents and generate answer using enhanced generator"""
+    start_time = time.time()
+    
+    with st.spinner("🔍 Searching documents and generating answer..."):
+        try:
+            # Search documents
+            search_results = search_documents(query, num_sources)
             
-    except Exception as e:
-        return f"Based on the available documents, I found information related to your query about '{query}'."
+            # Generate answer using enhanced generator
+            context_text = "\n\n".join([f"Source {i+1}: {result['content']}" for i, result in enumerate(search_results[:3])])
+            answer_result = st.session_state.generator.generate_answer(query, context_text, search_results)
+            
+            # Calculate response time
+            response_time = time.time() - start_time
+            
+            # Store result
+            st.session_state.last_result = {
+                'query': query,
+                'answer': answer_result,
+                'search_results': search_results,
+                'response_time': response_time
+            }
+            
+            # Update query count
+            st.session_state.query_count += 1
+            
+        except Exception as e:
+            st.error(f"Error during search: {str(e)}")
 
 def get_database_stats():
     """Get database statistics"""
@@ -506,7 +729,7 @@ def main():
     
     # Header
     st.title("🔬 Scientific Literature RAG System")
-    st.markdown("*Intelligent Question-Answering System for Biology Research Papers*")
+    st.markdown("*Intelligent Question-Answering System for Research Papers with AI Enhancement*")
     
     # Initialize system if not done
     if not st.session_state.initialized:
@@ -521,6 +744,23 @@ def main():
             "Choose a page:",
             ["🏠 Home", "📄 Document Management", "🔍 Search & Query", "📊 System Status"]
         )
+        
+        st.divider()
+        
+        # API Key Configuration
+        st.subheader("🔑 OpenAI Configuration")
+        current_key = os.getenv('OPENAI_API_KEY', '')
+        api_key_input = st.text_input(
+            "OpenAI API Key:",
+            value="***" if current_key else "",
+            type="password",
+            help="Enter your OpenAI API key for enhanced answers"
+        )
+        
+        if api_key_input and api_key_input != "***":
+            os.environ['OPENAI_API_KEY'] = api_key_input
+            if hasattr(st.session_state, 'generator'):
+                st.session_state.generator = EnhancedScientificAnswerGenerator(api_key=api_key_input)
         
         st.divider()
         
@@ -544,7 +784,7 @@ def main():
 
 def show_home_page():
     """Display home page"""
-    st.header("Welcome to the Scientific Literature RAG System")
+    st.header("Welcome to the Enhanced Scientific Literature RAG System")
     
     col1, col2 = st.columns([2, 1])
     
@@ -552,19 +792,21 @@ def show_home_page():
         st.markdown("""
         ### 🎯 What is this system?
         
-        This is a **Retrieval-Augmented Generation (RAG)** system for **Biology research papers**. It can:
+        This is an **Enhanced Retrieval-Augmented Generation (RAG)** system for **research papers** with **OpenAI integration**. It can:
         
         - 📚 **Process PDF research papers** and extract key information
         - 🔍 **Search through documents** using semantic similarity
-        - 🤖 **Generate intelligent answers** to your scientific questions
+        - 🤖 **Generate intelligent answers** using OpenAI GPT-3.5-turbo
         - 📊 **Handle mathematical equations** and scientific terminology
         - 📖 **Provide proper citations** for all answers
+        - 🧠 **Advanced AI reasoning** for complex scientific queries
         
         ### 🚀 Quick Start:
         
-        1. **Upload Papers**: Go to "Document Management" and upload biology PDFs
-        2. **Ask Questions**: Use "Search & Query" to ask about the papers
-        3. **Get Answers**: Receive intelligent, citation-backed responses
+        1. **Add API Key**: Enter your OpenAI API key in the sidebar (optional but recommended)
+        2. **Upload Papers**: Go to "Document Management" and upload data PDFs
+        3. **Ask Questions**: Use "Search & Query" to ask about the papers
+        4. **Get AI Answers**: Receive intelligent, citation-backed responses
         """)
         
         # Quick action buttons
@@ -572,14 +814,17 @@ def show_home_page():
         
         with col_a:
             if st.button("📄 Upload Documents", use_container_width=True):
+                st.session_state.current_page = "📄 Document Management"
                 st.rerun()
         
         with col_b:
             if st.button("🔍 Ask Questions", use_container_width=True):
+                st.session_state.current_page = "🔍 Search & Query"
                 st.rerun()
         
         with col_c:
             if st.button("📊 View Status", use_container_width=True):
+                st.session_state.current_page = "📊 System Status"
                 st.rerun()
     
     with col2:
@@ -589,6 +834,13 @@ def show_home_page():
         
         st.metric("Total Documents", stats.get('total_documents', 0))
         st.metric("Queries Processed", st.session_state.query_count)
+        
+        # API Status
+        api_key = os.getenv('OPENAI_API_KEY')
+        if api_key:
+            st.success("🤖 OpenAI: Enabled")
+        else:
+            st.warning("🤖 OpenAI: Disabled")
         
         if stats.get('files'):
             st.markdown("**Loaded Files:**")
@@ -608,7 +860,7 @@ def show_document_management():
             "Choose PDF files to upload",
             type=['pdf'],
             accept_multiple_files=True,
-            help="Upload biology research papers in PDF format"
+            help="Upload research papers in PDF format"
         )
         
         if uploaded_files:
@@ -689,14 +941,23 @@ def show_search_page():
     
     st.subheader("Ask Your Scientific Question")
     
+    # API Status indicator
+    api_key = os.getenv('OPENAI_API_KEY')
+    if api_key:
+        st.success("🤖 AI-Enhanced Mode: ON (OpenAI GPT-3.5-turbo)")
+    else:
+        st.info("🤖 AI-Enhanced Mode: OFF (Template-based responses)")
+    
     with st.expander("💡 Sample Questions"):
         sample_questions = [
-            "What is photosynthesis?",
-            "Explain DNA replication process",
-            "What are mitochondria functions?",
-            "How do enzymes work in metabolism?",
-            "What is protein synthesis?",
-            "Describe cellular respiration"
+            "What is photosynthesis and how does it work?",
+            "Explain the process of DNA replication",
+            "What are the functions of mitochondria in cells?",
+            "How do enzymes work in cellular metabolism?",
+            "Describe the mechanism of protein synthesis",
+            "What is the role of ribosomes in translation?",
+            "How does natural selection drive evolution?",
+            "What are the differences between prokaryotic and eukaryotic cells?"
         ]
         
         for question in sample_questions:
@@ -707,14 +968,14 @@ def show_search_page():
         "Enter your question:",
         value=st.session_state.get('current_query', ''),
         height=100,
-        placeholder="e.g., What is photosynthesis and how does it work?",
-        help="Ask any question about the biology research papers you've uploaded"
+        placeholder="e.g., What is photosynthesis and how does it work in plant cells?",
+        help="Ask any question about the research papers you've uploaded"
     )
     
     col1, col2 = st.columns([2, 1])
     
     with col1:
-        num_sources = st.slider("Max Sources:", 1, 10, 3)
+        num_sources = st.slider("Max Sources to Use:", 1, 10, 5)
     
     with col2:
         if st.button("🔍 Search & Answer", type="primary", use_container_width=True):
@@ -727,35 +988,6 @@ def show_search_page():
         st.divider()
         display_results(st.session_state.last_result)
 
-def search_and_answer(query, num_sources):
-    """Search documents and generate answer"""
-    start_time = time.time()
-    
-    with st.spinner("🔍 Searching documents and generating answer..."):
-        try:
-            # Search documents
-            search_results = search_documents(query, num_sources)
-            
-            # Generate answer
-            answer_result = generate_answer(query, search_results)
-            
-            # Calculate response time
-            response_time = time.time() - start_time
-            
-            # Store result
-            st.session_state.last_result = {
-                'query': query,
-                'answer': answer_result,
-                'search_results': search_results,
-                'response_time': response_time
-            }
-            
-            # Update query count
-            st.session_state.query_count += 1
-            
-        except Exception as e:
-            st.error(f"Error during search: {str(e)}")
-
 def display_results(result):
     """Display search results and answer"""
     st.subheader("🤖 Generated Answer")
@@ -766,16 +998,22 @@ def display_results(result):
         st.markdown(result['answer']['answer'])
         
         confidence = result['answer']['confidence']
+        generation_method = result['answer'].get('generation_method', 'unknown')
+        
         if confidence >= 0.7:
-            st.success(f"🟢 High confidence ({confidence:.1%})")
+            st.success(f"🟢 High confidence ({confidence:.1%}) - Method: {generation_method}")
         elif confidence >= 0.4:
-            st.warning(f"🟡 Medium confidence ({confidence:.1%})")
+            st.warning(f"🟡 Medium confidence ({confidence:.1%}) - Method: {generation_method}")
         else:
-            st.error(f"🔴 Low confidence ({confidence:.1%})")
+            st.error(f"🔴 Low confidence ({confidence:.1%}) - Method: {generation_method}")
     
     with col2:
         st.metric("Response Time", f"{result['response_time']:.2f}s")
         st.metric("Sources Used", len(result['answer']['sources_used']))
+        
+        # Show AI model used if available
+        if result['answer'].get('model_used'):
+            st.info(f"AI Model: {result['answer']['model_used']}")
     
     # Sources section
     if result['answer']['sources_used']:
@@ -808,7 +1046,7 @@ def show_system_status():
     """Display system status"""
     st.header("📊 System Status")
     
-    tabs = st.tabs(["📈 Performance", "💾 Database", "⚙️ System Info"])
+    tabs = st.tabs(["📈 Performance", "💾 Database", "⚙️ System Info", "🤖 AI Status"])
     
     with tabs[0]:
         st.subheader("Performance Metrics")
@@ -862,6 +1100,37 @@ def show_system_status():
         
         for key, value in system_info.items():
             st.write(f"**{key}:** {value}")
+    
+    with tabs[3]:
+        st.subheader("AI Enhancement Status")
+        
+        api_key = os.getenv('OPENAI_API_KEY')
+        
+        if api_key:
+            st.success("✅ OpenAI API Key: Configured")
+            if OPENAI_AVAILABLE:
+                st.success("✅ OpenAI Library: Installed")
+                st.success("✅ AI Mode: Enhanced responses with GPT-3.5-turbo")
+                
+                # Test API connection
+                if st.button("🧪 Test API Connection"):
+                    try:
+                        test_client = OpenAI(api_key=api_key)
+                        response = test_client.chat.completions.create(
+                            model="gpt-3.5-turbo",
+                            messages=[{"role": "user", "content": "Hello"}],
+                            max_tokens=5
+                        )
+                        st.success("✅ API Connection: Working")
+                    except Exception as e:
+                        st.error(f"❌ API Connection Failed: {e}")
+            else:
+                st.error("❌ OpenAI Library: Not installed")
+        else:
+            st.warning("⚠️ OpenAI API Key: Not configured")
+            st.info("💡 Add your API key in the sidebar for enhanced AI responses")
+        
+        st.info("🔄 Fallback Mode: Template-based responses always available")
 
 def clear_database():
     """Clear all documents from database"""
@@ -869,7 +1138,7 @@ def clear_database():
         st.session_state.db_client.delete_collection("scientific_papers")
         st.session_state.collection = st.session_state.db_client.create_collection(
             name="scientific_papers",
-            metadata={"description": "Scientific literature for biology RAG system"}
+            metadata={"description": "Scientific literature for RAG system"}
         )
         st.success("✅ Database cleared successfully!")
         st.rerun()
