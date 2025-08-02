@@ -1,23 +1,41 @@
-streamlit==1.28.1
-sentence-transformers==2.2.2
-chromadb==0.4.15
-PyPDF2==3.0.1
+# Core Streamlit and Web Framework
+streamlit==1.29.0
+
+# Document Processing
+pypdf==3.17.4
+python-dotenv==1.0.0
+
+# NLP and Text Processing
 nltk==3.8.1
-spacy==3.6.1
-numpy==1.24.3
-pandas==2.0.3
-scikit-learn==1.3.0
-regex==2023.8.8
-python-dotenv==1.0.0
-typing-extensions==4.7.1
-pydantic==2.4.2
+sentence-transformers==2.2.2
+transformers==4.36.2
+
+# Vector Database (updated to avoid compilation issues)
+chromadb>=0.4.22
+
+# Scientific Computing (updated for Python 3.12)
+numpy>=1.26.0
+pandas>=2.1.0
+scikit-learn>=1.3.0
+
+# Machine Learning (CPU-only versions for Python 3.12)
+torch>=2.2.0
+torchvision>=0.17.0
+torchaudio>=2.2.0
+
+# OpenAI Integration
+openai>=1.98.0
+
+# Utilities
+regex==2023.10.3
 requests==2.31.0
-urllib3==2.0.4
-huggingface-hub==0.17.3
-transformers==4.33.2
-torch==2.0.1
-torchaudio==2.0.2
-torchvision==0.15.2
-psutil==5.9.5
-openai==1.3.0
-python-dotenv==1.0.0
+urllib3==2.0.7
+pydantic>=2.5.0
+typing-extensions==4.8.0
+psutil==5.9.6
+huggingface-hub==0.19.4
+
+# Additional dependencies for Python 3.12 compatibility
+protobuf>=4.25.1
+setuptools>=69.0.0
+wheel>=0.42.0 

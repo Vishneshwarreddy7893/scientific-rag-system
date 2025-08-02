@@ -2,7 +2,7 @@
 Document processor for scientific literature with equation and citation detection
 """
 
-import PyPDF2
+import pypdf
 import re
 import os
 from typing import List, Dict, Any
@@ -50,7 +50,7 @@ class DocumentProcessor:
         """Extract text from PDF file"""
         try:
             with open(file_path, 'rb') as file:
-                pdf_reader = PyPDF2.PdfReader(file)
+                pdf_reader = pypdf.PdfReader(file)
                 text = ""
                 
                 for page_num, page in enumerate(pdf_reader.pages):

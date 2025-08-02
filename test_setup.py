@@ -16,10 +16,10 @@ def test_imports():
         return False
     
     try:
-        import PyPDF2
-        print("✅ PyPDF2 imported successfully")
+        import pypdf
+        print("✅ pypdf imported successfully")
     except ImportError:
-        print("❌ PyPDF2 import failed")
+        print("❌ pypdf import failed")
         return False
     
     try:

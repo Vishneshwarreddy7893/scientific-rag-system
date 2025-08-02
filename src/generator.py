@@ -19,7 +19,11 @@ class ScientificAnswerGenerator:
             self.use_openai = False
         else:
             try:
-                self.client = OpenAI(api_key=self.api_key)
+                # Initialize OpenAI client with proper configuration
+                self.client = OpenAI(
+                    api_key=self.api_key,
+                    # Remove any deprecated parameters
+                )
                 self.use_openai = True
                 print("✅ OpenAI client initialized successfully")
             except Exception as e:

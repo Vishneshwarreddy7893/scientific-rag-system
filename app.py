@@ -27,7 +27,7 @@ st.set_page_config(
 )
 
 # Import our modules (inline to avoid import issues)
-import PyPDF2
+import pypdf
 import re
 import nltk
 from sentence_transformers import SentenceTransformer
@@ -84,7 +84,7 @@ class DocumentProcessor:
         """Extract text from PDF file"""
         try:
             with open(file_path, 'rb') as file:
-                pdf_reader = PyPDF2.PdfReader(file)
+                pdf_reader = pypdf.PdfReader(file)
                 text = ""
                 
                 for page_num, page in enumerate(pdf_reader.pages):
@@ -273,7 +273,11 @@ class EnhancedScientificAnswerGenerator:
                 st.info("💡 No OpenAI API key found. Using template-based generation.")
         else:
             try:
-                self.client = OpenAI(api_key=self.api_key)
+                # Initialize OpenAI client with proper configuration
+                self.client = OpenAI(
+                    api_key=self.api_key,
+                    # Remove any deprecated parameters
+                )
                 self.use_openai = True
                 st.success("✅ OpenAI client initialized successfully")
             except Exception as e:
@@ -729,7 +733,7 @@ def main():
     
     # Header
     st.title("🔬 Scientific Literature RAG System")
-    st.markdown("*Intelligent Question-Answering System for Research Papers with AI Enhancement*")
+    st.markdown("*Intelligent Question-Answering System for Biology Research Papers with AI Enhancement*")
     
     # Initialize system if not done
     if not st.session_state.initialized:
@@ -792,7 +796,7 @@ def show_home_page():
         st.markdown("""
         ### 🎯 What is this system?
         
-        This is an **Enhanced Retrieval-Augmented Generation (RAG)** system for **research papers** with **OpenAI integration**. It can:
+        This is an **Enhanced Retrieval-Augmented Generation (RAG)** system for **Biology research papers** with **OpenAI integration**. It can:
         
         - 📚 **Process PDF research papers** and extract key information
         - 🔍 **Search through documents** using semantic similarity
@@ -804,7 +808,7 @@ def show_home_page():
         ### 🚀 Quick Start:
         
         1. **Add API Key**: Enter your OpenAI API key in the sidebar (optional but recommended)
-        2. **Upload Papers**: Go to "Document Management" and upload data PDFs
+        2. **Upload Papers**: Go to "Document Management" and upload biology PDFs
         3. **Ask Questions**: Use "Search & Query" to ask about the papers
         4. **Get AI Answers**: Receive intelligent, citation-backed responses
         """)
@@ -860,7 +864,7 @@ def show_document_management():
             "Choose PDF files to upload",
             type=['pdf'],
             accept_multiple_files=True,
-            help="Upload research papers in PDF format"
+            help="Upload biology research papers in PDF format"
         )
         
         if uploaded_files:
@@ -969,7 +973,7 @@ def show_search_page():
         value=st.session_state.get('current_query', ''),
         height=100,
         placeholder="e.g., What is photosynthesis and how does it work in plant cells?",
-        help="Ask any question about the research papers you've uploaded"
+        help="Ask any question about the biology research papers you've uploaded"
     )
     
     col1, col2 = st.columns([2, 1])
@@ -1138,7 +1142,7 @@ def clear_database():
         st.session_state.db_client.delete_collection("scientific_papers")
         st.session_state.collection = st.session_state.db_client.create_collection(
             name="scientific_papers",
-            metadata={"description": "Scientific literature for RAG system"}
+            metadata={"description": "Scientific literature for biology RAG system"}
         )
         st.success("✅ Database cleared successfully!")
         st.rerun()
