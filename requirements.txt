@@ -1,36 +1,21 @@
-# Web Framework
-streamlit==1.28.0
-
-# Document Processing
-PyPDF2==3.0.1
-python-docx==0.8.11
-
-# Text Processing
-nltk==3.8.1
-spacy==3.7.2
-
-# Embeddings (Free)
+streamlit==1.28.1
 sentence-transformers==2.2.2
-
-# Vector Database (Free)
 chromadb==0.4.15
-
-# Scientific Computing
+PyPDF2==3.0.1
+nltk==3.8.1
+spacy==3.6.1
 numpy==1.24.3
 pandas==2.0.3
-
-# Text Generation (Free Local)
-transformers==4.35.0
-torch==2.1.0
-
-# Utilities
+scikit-learn==1.3.0
+regex==2023.8.8
 python-dotenv==1.0.0
-tqdm==4.66.1
-
-# Math/Equation Processing
-sympy==1.12
-matplotlib==3.7.2
-
-# Additional utilities
+typing-extensions==4.7.1
+pydantic==2.4.2
 requests==2.31.0
-beautifulsoup4==4.12.2
+urllib3==2.0.4
+huggingface-hub==0.17.3
+transformers==4.33.2
+torch==2.0.1
+torchaudio==2.0.2
+torchvision==0.15.2
+psutil==5.9.5
